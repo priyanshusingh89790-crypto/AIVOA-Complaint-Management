@@ -62,6 +62,14 @@ class ComplaintIn(BaseModel):
     description: str = Field(default="", max_length=20000)
 
 
+class ComplaintCommitIn(ComplaintIn):
+    analysis: dict[str, Any] | None = None
+
+
+class StatusUpdateIn(BaseModel):
+    status: str
+
+
 @app.get("/api/health")
 def health_check():
     return {"status": "ok", "service": "AIVOA Complaint Management API", "version": app.version}
@@ -90,32 +98,24 @@ async def analyze_document(file: UploadFile = File(...)):
 
 
 @app.post("/api/complaints")
-def create_complaint(payload: ComplaintIn):
-    result = analyze_complaint(payload.model_dump())
-    data = result["extracted"]
+def create_complaint(payload: ComplaintCommitIn):
+    result = payload.analysis or analyze_complaint(payload.model_dump(exclude={"analysis"}))
+    data = result.get("extracted") or payload.model_dump(exclude={"analysis"})
     db = SessionLocal()
     try:
         record = ComplaintRecord(
-            customer=data.get("customer"),
-            organization=data.get("organization"),
-            product=data.get("product"),
-            batch=data.get("batch"),
-            category=data.get("category"),
-            summary=data.get("summary"),
-            description=data.get("description"),
-            quantity=data.get("quantity"),
-            analysis=result,
-            status="QA_REVIEW",
+            customer=data.get("customer"), organization=data.get("organization"), product=data.get("product"),
+            batch=data.get("batch"), category=data.get("category"), summary=data.get("summary"),
+            description=data.get("description"), quantity=data.get("quantity"), analysis=result, status="QA_REVIEW",
         )
-        db.add(record)
-        db.commit()
-        db.refresh(record)
-        return {"status": "ok", "id": record.id, "record_status": record.status, "analysis": result}
+        db.add(record); db.commit(); db.refresh(record)
+        return {"status":"ok","id":record.id,"record_status":record.status,"analysis":result}
     finally:
         db.close()
 
 
 @app.get("/api/complaints")
+
 def list_complaints():
     db = SessionLocal()
     try:
@@ -136,5 +136,33 @@ def list_complaints():
                 for r in rows
             ],
         }
+    finally:
+        db.close()
+
+
+@app.get("/api/complaints/{complaint_id}")
+def get_complaint(complaint_id: int):
+    db = SessionLocal()
+    try:
+        r = db.get(ComplaintRecord, complaint_id)
+        if not r: raise HTTPException(status_code=404, detail="Complaint not found")
+        return {"status":"ok","item":{
+            "id":r.id,"customer":r.customer,"organization":r.organization,"product":r.product,"batch":r.batch,
+            "category":r.category,"summary":r.summary,"description":r.description,"quantity":r.quantity,
+            "status":r.status,"analysis":r.analysis,"created_at":r.created_at.isoformat() if r.created_at else None}}
+    finally:
+        db.close()
+
+
+@app.patch("/api/complaints/{complaint_id}/status")
+def update_complaint_status(complaint_id: int, payload: StatusUpdateIn):
+    allowed = {"QA_REVIEW","INVESTIGATION","CAPA_REVIEW","CLOSED"}
+    if payload.status not in allowed: raise HTTPException(status_code=400, detail=f"Status must be one of: {', '.join(sorted(allowed))}")
+    db = SessionLocal()
+    try:
+        r = db.get(ComplaintRecord, complaint_id)
+        if not r: raise HTTPException(status_code=404, detail="Complaint not found")
+        r.status = payload.status; db.commit(); db.refresh(r)
+        return {"status":"ok","id":r.id,"record_status":r.status}
     finally:
         db.close()
