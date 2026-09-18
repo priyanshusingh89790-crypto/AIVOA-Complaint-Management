@@ -1,8 +1,8 @@
 import { useState } from 'react'
-
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8001/api'
 import { AlertTriangle, Brain, CheckCircle2, FileText, LayoutDashboard, Send, ShieldCheck, Sparkles, UploadCloud } from 'lucide-react'
 import './App.css'
+
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8001/api'
 
 const sample = {
   customer: 'Apollo Pharmacy',
