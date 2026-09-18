@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AlertTriangle, Brain, CheckCircle2, FileText, LayoutDashboard, Send, ShieldCheck, Sparkles, UploadCloud } from 'lucide-react'
 import './App.css'
 
@@ -23,6 +23,10 @@ function App() {
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
   const [filename, setFilename] = useState('')
+  const [view, setView] = useState('workspace')
+  const [history, setHistory] = useState([])
+  const [selected, setSelected] = useState(null)
+  const [loadingHistory, setLoadingHistory] = useState(false)
 
   const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }))
 
@@ -34,7 +38,7 @@ function App() {
   const analyze = async () => {
     setAnalyzing(true); setSaved(false); setError('')
     try {
-      const response = await fetch(`${API}/analyze`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(form) })
+      const response = await fetch(`${API}/analyze`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ ...form, analysis: result }) })
       const data = await response.json()
       if (!response.ok) throw new Error(data.detail || 'Analysis failed')
       setResult(data); applyExtracted(data.extracted); setAnalyzed(true)
@@ -65,6 +69,38 @@ function App() {
     } catch (err) { setError(err.message || 'Could not save the complaint') }
   }
 
+  const loadHistory = async () => {
+    setLoadingHistory(true)
+    try {
+      const response = await fetch(`${API}/complaints`)
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.detail || 'Could not load complaint history')
+      setHistory(data.items || [])
+    } catch (err) { setError(err.message || 'Could not load complaint history') }
+    finally { setLoadingHistory(false) }
+  }
+
+  const openComplaint = async id => {
+    try {
+      const response = await fetch(`${API}/complaints/${id}`)
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.detail || 'Could not load complaint')
+      setSelected(data.item); setView('detail')
+    } catch (err) { setError(err.message || 'Could not load complaint') }
+  }
+
+  const updateStatus = async (id, status) => {
+    try {
+      const response = await fetch(`${API}/complaints/${id}/status`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({status}) })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.detail || 'Could not update status')
+      setSelected(prev => prev ? {...prev, status: data.record_status} : prev)
+      loadHistory()
+    } catch (err) { setError(err.message || 'Could not update status') }
+  }
+
+  useEffect(() => { if (view === 'history') loadHistory() }, [view])
+
   const submit = e => { e.preventDefault(); analyze() }
 
   const risk = result?.risk?.level || '—'
@@ -78,12 +114,34 @@ function App() {
     <div className="app-shell">
       <header className="topbar">
         <div className="brand"><div className="brand-mark">A</div><div><strong>AIVOA</strong><span>Quality Management System</span></div></div>
-        <nav><button className="active"><LayoutDashboard size={16}/> Complaint Workspace</button><button>Complaint History</button><button>Analytics</button></nav>
+        <nav>
+          <button className={view === 'workspace' ? 'active' : ''} onClick={() => setView('workspace')}><LayoutDashboard size={16}/> Complaint Workspace</button>
+          <button className={view === 'history' ? 'active' : ''} onClick={() => setView('history')}><FileText size={16}/> Complaint History</button>
+          <button><LayoutDashboard size={16}/> Analytics</button>
+        </nav>
         <div className="user-chip"><span className="status-dot"/> QA Workspace</div>
       </header>
 
       <main>
-        <section className="hero">
+        {view === 'history' && (
+          <section className="panel history-panel">
+            <div className="panel-head"><div><span className="step">QMS</span><div><h2>Complaint history</h2><p>Review committed records and their current lifecycle status.</p></div></div><button className="ghost" onClick={loadHistory}>{loadingHistory ? 'Refreshing…' : 'Refresh'}</button></div>
+            {!history.length ? <div className="history-empty">{loadingHistory ? 'Loading complaint records…' : 'No committed complaints yet. Analyze and commit a complaint to create the first record.'}</div> :
+              <div className="history-table">
+                <div className="history-row history-header"><span>ID</span><span>Customer</span><span>Product</span><span>Batch</span><span>Risk</span><span>Status</span><span></span></div>
+                {history.map(item => <button className="history-row" key={item.id} onClick={() => openComplaint(item.id)}><span>#{item.id}</span><span>{item.customer || '—'}</span><span>{item.product || '—'}</span><span>{item.batch || '—'}</span><span className="risk-pill">{item.risk || '—'}</span><span className="status-pill">{item.status}</span><span>View →</span></button>)}
+              </div>}
+          </section>
+        )}
+        {view === 'detail' && selected && (
+          <section className="panel detail-panel">
+            <div className="panel-head"><div><span className="step">#{selected.id}</span><div><h2>Complaint detail</h2><p>{selected.customer || 'Unknown customer'} · {selected.product || 'Unknown product'}</p></div></div><button className="ghost" onClick={() => setView('history')}>← Back to history</button></div>
+            <div className="detail-grid"><div><span>STATUS</span><strong>{selected.status}</strong></div><div><span>RISK</span><strong>{selected.analysis?.risk?.level || '—'}</strong></div><div><span>BATCH / LOT</span><strong>{selected.batch || '—'}</strong></div><div><span>CATEGORY</span><strong>{selected.category || '—'}</strong></div></div>
+            <div className="detail-content"><div><span>COMPLAINT</span><h3>{selected.summary || 'No summary'}</h3><p>{selected.description || 'No description'}</p></div><div><span>AI CLASSIFICATION</span><h3>{selected.analysis?.classification?.defect_type || 'Unclassified'}</h3><p>{selected.analysis?.classification?.rationale || 'QA review required.'}</p></div><div><span>RECOMMENDED ACTIONS</span>{(selected.analysis?.recommendation?.actions || []).slice(0,4).map((a,i)=><strong key={i}>• {a}</strong>)}</div></div>
+            <div className="status-actions"><span>Move through controlled lifecycle:</span>{['QA_REVIEW','INVESTIGATION','CAPA_REVIEW','CLOSED'].map(s=><button key={s} className={selected.status===s?'selected':''} onClick={() => updateStatus(selected.id,s)}>{s.replace('_',' ')}</button>)}</div>
+          </section>
+        )}
+        {view === 'workspace' && <>        <section className="hero">
           <div>
             <p className="eyebrow"><Sparkles size={15}/> AI-ASSISTED QUALITY WORKFLOW</p>
             <h1>Complaint Intelligence<br/><span>for faster QA decisions.</span></h1>
@@ -124,6 +182,7 @@ function App() {
           </aside>
         </div>
         <section className="workflow"><div><span>03</span><strong>Human review</strong><p>QA validates AI findings before final disposition.</p></div><div><span>04</span><strong>Controlled record</strong><p>Commit the reviewed complaint into the QMS database.</p></div><div><span>05</span><strong>Traceable action</strong><p>Recommendations guide investigation and escalation.</p></div></section>
+</>}
       </main>
       <footer>AIVOA Complaint Management <span>•</span> AI-assisted, human-controlled quality workflow</footer>
     </div>
