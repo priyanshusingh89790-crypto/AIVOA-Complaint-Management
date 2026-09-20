@@ -27,6 +27,8 @@ function App() {
   const [history, setHistory] = useState([])
   const [selected, setSelected] = useState(null)
   const [loadingHistory, setLoadingHistory] = useState(false)
+  const [analytics, setAnalytics] = useState(null)
+  const [duplicates, setDuplicates] = useState([])
 
   const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }))
 
@@ -69,6 +71,10 @@ function App() {
     } catch (err) { setError(err.message || 'Could not save the complaint') }
   }
 
+  const loadAnalytics = async () => { try { const response = await fetch(`${API}/analytics`); const data = await response.json(); if (response.ok) setAnalytics(data) } catch {} }
+
+  const checkDuplicates = async () => { try { const response = await fetch(`${API}/duplicates`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)}); const data = await response.json(); if (response.ok) setDuplicates(data.matches || []) } catch {} }
+
   const loadHistory = async () => {
     setLoadingHistory(true)
     try {
@@ -99,7 +105,7 @@ function App() {
     } catch (err) { setError(err.message || 'Could not update status') }
   }
 
-  useEffect(() => { if (view === 'history') loadHistory() }, [view])
+  useEffect(() => { if (view === 'history') loadHistory(); if (view === 'analytics') loadAnalytics() }, [view])
 
   const submit = e => { e.preventDefault(); analyze() }
 
@@ -117,12 +123,19 @@ function App() {
         <nav>
           <button className={view === 'workspace' ? 'active' : ''} onClick={() => setView('workspace')}><LayoutDashboard size={16}/> Complaint Workspace</button>
           <button className={view === 'history' ? 'active' : ''} onClick={() => setView('history')}><FileText size={16}/> Complaint History</button>
-          <button><LayoutDashboard size={16}/> Analytics</button>
+          <button className={view === 'analytics' ? 'active' : ''} onClick={() => setView('analytics')}><LayoutDashboard size={16}/> Analytics</button>
         </nav>
         <div className="user-chip"><span className="status-dot"/> QA Workspace</div>
       </header>
 
       <main>
+        {view === 'analytics' && (
+          <section className="panel analytics-panel">
+            <div className="panel-head"><div><span className="step">QMS</span><div><h2>Quality analytics</h2><p>Operational overview of complaint volume, risk and lifecycle.</p></div></div><button className="ghost" onClick={loadAnalytics}>Refresh</button></div>
+            <div className="kpi-grid"><Kpi label="Total complaints" value={analytics?.total ?? '—'}/><Kpi label="QA review" value={analytics?.statuses?.QA_REVIEW ?? 0}/><Kpi label="High risk" value={(analytics?.risks?.HIGH || 0)+(analytics?.risks?.CRITICAL || 0)}/><Kpi label="Closed" value={analytics?.statuses?.CLOSED ?? 0}/></div>
+            <div className="analytics-grid"><div className="analytics-card"><span>RISK DISTRIBUTION</span>{Object.entries(analytics?.risks || {}).map(([k,v])=><div className="bar-row" key={k}><b>{k}</b><i><em style={{width: `${analytics?.total ? Math.max(4,v/analytics.total*100):0}%`}}/></i><strong>{v}</strong></div>)}</div><div className="analytics-card"><span>TOP CATEGORIES</span>{Object.entries(analytics?.categories || {}).map(([k,v])=><div className="bar-row" key={k}><b>{k}</b><i><em style={{width: `${analytics?.total ? Math.max(4,v/analytics.total*100):0}%`}}/></i><strong>{v}</strong></div>)}</div></div>
+          </section>
+        )}
         {view === 'history' && (
           <section className="panel history-panel">
             <div className="panel-head"><div><span className="step">QMS</span><div><h2>Complaint history</h2><p>Review committed records and their current lifecycle status.</p></div></div><button className="ghost" onClick={loadHistory}>{loadingHistory ? 'Refreshing…' : 'Refresh'}</button></div>
@@ -177,7 +190,7 @@ function App() {
                 <div className="score"><div><span>Completeness</span><strong>{completeness}%</strong></div><div className="progress"><i style={{width: `${completeness}%`}}/></div></div>
                 <div className="insight"><span>CLASSIFICATION</span><strong>{classification}</strong><p>{result?.classification?.rationale || "QA review is required before final disposition."}</p></div>
                 <div className="insight"><span>RECOMMENDED ACTIONS</span>{actions.slice(0, 3).map((action, i) => <strong key={i}>• {action}</strong>)}<p>{result?.recommendation?.rationale || "Recommendations are provisional and require QA review."}</p></div>
-                <button className="commit" onClick={commit}>{saved ? <><CheckCircle2 size={17}/> Committed to QMS</> : 'Commit reviewed complaint to QMS'}</button>
+                <button className="ghost duplicate-button" onClick={checkDuplicates}>Check similar complaints</button>{duplicates.length > 0 && <div className="duplicate-list">{duplicates.map(d => <div key={d.id}><strong>{d.score}% similar · #{d.id}</strong><span>{d.product || 'Unknown product'} · Batch {d.batch || '—'}</span></div>)}</div>}<button className="commit" onClick={commit}>{saved ? <><CheckCircle2 size={17}/> Committed to QMS</> : 'Commit reviewed complaint to QMS'}</button>
               </div>}
           </aside>
         </div>
@@ -188,6 +201,8 @@ function App() {
     </div>
   )
 }
+
+function Kpi({label,value}) { return <div className="kpi"><span>{label}</span><strong>{value}</strong></div> }
 
 function Field({label,value,onChange,wide=false}) {
   return <label className={'field '+(wide?'wide':'')}><span>{label}</span><input value={value} onChange={e=>onChange(e.target.value)}/></label>
